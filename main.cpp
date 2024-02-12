@@ -1,6 +1,9 @@
 #include <iostream>
 #include <pqxx/pqxx>
 #include <windows.h>
+#undef min
+#undef max
+
 #pragma execution_character_set()
 
 // это метод, которые создаёт таблицу для хранения персональной информации о клиенте
@@ -10,52 +13,66 @@
 void create_tables_if_not_exists(pqxx::connection& c)
 {
 	pqxx::transaction t(c);
-	t.exec("Create table if not exists clients (id int not null, first_name text not null, last_name text not null, e_mail text not null, constraint clients_pr primary key(id));" 
-		"Create table if not exists telephones (id int not null, number varchar, constraint telephones_pr primary key(id), clients_id int not null references clients(id))");
+	t.exec(
+		"Create table if not exists clients" 
+		"("
+			"id serial primary key,"
+			"first_name text not null,"
+			"last_name text not null,"
+			"email text not null"
+			");"
+		"Create table if not exists telephones"
+		"("
+			"id serial primary key,"
+			"clients_id integer references clients(id),"
+			"number varchar"
+		");"
+	);
 	t.commit();
 }
 
 // Метод, позволяющий добавить нового клиента
-// В этом методе ошибка - почему-то печатает сразу два первых запроса на ввод подряд, а вводить при этом можно только один.
+
 void add_new_client(pqxx::connection& c)
 {
-	c.prepare("add_client", "insert into clients(id, first_name), last_name, e_mail) values($1, $2), $3, $4)");
-
+	// здесь ошибка, при вводе отсутствует имя клиента (first name)
 	std::string first_name;
 	std::cout << "Enter clients first name: ";
 	std::getline(std::cin, first_name);
+	std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
 
 	std::string last_name;
 	std::cout << "Enter clients last name: ";
 	std::getline(std::cin, last_name);
+
+	std::string email;
+	std::cout << "Enter clients email: ";
+	std::getline(std::cin, email);
 	
-	std::string e_mail;
-	std::cout << "Enter clients e-mail: ";
-	std::getline(std::cin, e_mail);
-
 	pqxx::transaction t(c);
-
-	t.exec_prepared("add_client", 1, first_name, last_name,e_mail);
+	t.exec("insert into clients(first_name, last_name, email) values('" + first_name + "',  '" + last_name + "',  '" + email + "')");
 
 	t.commit();
 }
 
 // Метод, позволяющий добавить телефон существующего клиента
-// В этом методе ошибка - почему-то печатает сразу два первых запроса на ввод подряд, а вводить при этом можно только один.
+
 void add_new_telephone_number(pqxx::connection& c)
 {
-	c.prepare("add_new_tel_number", "insert into telephones(id, number, clients_id) values( $1, $2, $3)");
 	std::string clients_id;
 	std::cout << "Enter clients id: ";
 	std::getline(std::cin, clients_id);
+	std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
 
 	std::string telephone_number;
 	std::cout << "Enter clients telephone number: ";
 	std::getline(std::cin, telephone_number);
 
 	pqxx::transaction t(c);
-
-	t.exec_prepared("add_new_tel_number", 1, telephone_number, clients_id);
+	// запрос в дебривере, который выгляди так
+	//insert into telephones(clients_id, number) values(1, 11);
+	//нормально работает, а этот не хочет
+	t.exec("insert into telephones(clients_id, number) values(clients_id, '" + telephone_number + "');");
 
 	t.commit();
 }
@@ -63,8 +80,11 @@ void add_new_telephone_number(pqxx::connection& c)
 // Метод, позволяющий изменить данные клиента
 
 void change_clients_data(pqxx::connection& c)
-{
-	c.prepare("change_clients_data", "update clients set id = $1, first_name = $2, last_name = $3, e_mail = $4");
+{	
+	std::string client_id;
+	std::cout << "Enter clients id: ";
+	std::getline(std::cin, client_id);
+	std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
 	
 	std::string first_name;
 	std::cout << "Enter clients first name: ";
@@ -74,50 +94,85 @@ void change_clients_data(pqxx::connection& c)
 	std::cout << "Enter clients last name: ";
 	std::getline(std::cin, last_name);
 
-	std::string e_mail;
+	std::string email;
 	std::cout << "Enter clients e-mail: ";
-	std::getline(std::cin, e_mail);
+	std::getline(std::cin, email);
 
 	pqxx::transaction t(c);
 
-	t.exec_prepared("change_clients_data", 1, first_name, last_name, e_mail);
+	t.exec("update clients "
+		"set first_name = '" + first_name + "', last_name = '" + last_name + "', email = '" + email + "' "
+		"where id = " + client_id + "; "
+		);
+	// вот такой скрипт нормально работает, в тот скрипт, который выше, работать не хочет.
+	// Ошибка где-то в самом конце, после id = 
+	//update clients
+	//set first_name = 'tom', last_name = 'soyer', email = 'tmail'
+	//where id = 1;
 
 	t.commit();
 }
 
 // Метод, позволяющий удалить телефон у существующего клиента
-
+// Этот метод работает, если у клиента только один телефон. Нужно сделать, чтобы метод удалял телефон на выбор
 void delete_telephone(pqxx::connection& c)
 {
-	c.prepare("delete_telephone", "delete from telephones where id = $1");
-	
 	std::string clients_id;
 	std::cout << "Enter clients id of client, telephone number of whom you want delete: ";
 	std::getline(std::cin, clients_id);
+	std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+
+	std::string deleting_phone_number;
+	std::cout << "Enter telephone_number, which you want delete: ";
+	std::getline(std::cin, deleting_phone_number);
 
 	pqxx::transaction t(c);
 
-	t.exec_prepared("delete_telephone", 1);
+	t.exec("delete from telephones where clients_id = clients_id and number = deleting_phone_number");
 
 	t.commit();
 }
 
-// метод, позволяющий удалить существующего клиента
-
+// метод, позволяющий удалить существующего клиента, цифра 5
+// Этот метод позволяет 
 void delete_client(pqxx::connection& c)
 {
-	c.prepare("delete_tel", "delete from telephones where id = $1");
-	c.prepare("delete_clients", "delete from clients where id = $1");
-
 	std::string clients_id;
 	std::cout << "Enter clients id of client, whom you want delete: ";
 	std::getline(std::cin, clients_id);
-
+	std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
 	pqxx::transaction t(c);
 
-	t.exec_prepared("delete_tel", clients_id);
-	t.exec_prepared("delete_clients", clients_id);
+	t.exec("delete from telephones where clients_id = clients_id");
+	t.commit();
+}
 
+// метод, позволяющий найти клиета его данным, цифра 6
+// можно найти клиента по его данным - имени, фамилии, электронной почте или телефону.
+
+void find_client(pqxx::connection& c)
+{
+
+	std::string first_name;
+	std::cout << "Enter clients first name: ";
+	std::getline(std::cin, first_name);
+	std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+	std::string last_name;
+	std::cout << "Enter clients last name: ";
+	std::getline(std::cin, last_name);
+
+	std::string e_mail;
+	std::cout << "Enter clients e-mail: ";
+	std::getline(std::cin, e_mail);
+
+	std::string telephone_number;
+	std::cout << "Enter clients telephone number: ";
+	std::getline(std::cin, telephone_number);
+	
+	pqxx::transaction t(c);
+
+	t.exec("select first_name from clients");
+	// or last_name in '" + last_name + "' or e_mail in '" + e_mail + "'" + first_name + "
 	t.commit();
 }
 
@@ -140,13 +195,11 @@ int main()
 		create_tables_if_not_exists(c);
 
 		// здесь пока нужно всякий раз вручную удалять нового клиента, пока не настроил.
-		std::cout << "If you want add new client, print 1, if you want add telephone to client, print 2," 
-			"if you want change client's data, print 3, if you want delete tel number of exist client, print 4"
-			"if you want delete exist client, print 5, if you want find client with his data print 6" 
+		std::cout << "If you want add new client, print 1, if you want add telephone to client, print 2, " 
+			"if you want change client's data, print 3, if you want delete tel number of exist client, print 4, "
+			"if you want delete exist client, print 5, if you want find client with his data print 6, " 
 			" if you want finished work, print 0"<< std::endl;
 
-		
-		
 		int a;
 		std::cout << "You decision: ";
 		std::cin >> a;
@@ -178,47 +231,14 @@ int main()
 		}
 		else if (a == 6)
 		{
-			std::cout << "Sorry, we find right decision of this problem" << std::endl;
+			//вызывает метод, позволяющий найти клиента по фамилии, имени, электронной почте или телефону
+			find_client(c);
 		}
 		else
 		{
 			std::cout << "Finished work, good buy" << std::endl;
 		}
-		
-		// Метод, позволяющий найти клиента по его данным - имени, фамилии, электронной почте или телефону.
 
-
-		/*
-		std::string first_name;
-		std::cout << "Enter clients first name: ";
-		std::getline(std::cin, first_name);
-
-		std::string last_name;
-		std::cout << "Enter clients last name: ";
-		std::getline(std::cin, last_name);
-
-		std::string e_mail;
-		std::cout << "Enter clients e-mail: ";
-		std::getline(std::cin, e_mail);
-
-		std::string telephone_number;
-		std::cout << "Enter clients telephone number: ";
-		std::getline(std::cin, telephone_number);
-		*/
-		/*
-		pqxx::transaction t(c);
-
-		t.exec("select first_name from clients where first_name = 'ser'; ");
-		// or last_name in '" + last_name + "' or e_mail in '" + e_mail + "'" + first_name + "
-		t.commit();
-		*/
-
-		// Запрос на строке 197 работает не корректно. Это выражается в том, что при запуске запроса всё хорошо,
-		// но таблица, открытая в DBreaver не меняется после обновления.
-		// если же этот же запрос скопировать в отдельный скпипт в DBreaver, запрос работает, 
-		// после обновления в таблице clients на экране виден только один столбик и только одно слово - ser
-
-		// Не понятно, где ошибка?
 		std::cout << "Good bye" << std::endl;
 	}
 	catch (const std::exception& e)
